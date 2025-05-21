@@ -20,6 +20,12 @@
 #include <condition_variable> // For std::condition_variable
 #include <queue>     // For std::queue
 #include <future>    // For std::future
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 static bool quietProgress = false;
@@ -179,6 +185,15 @@ public:
         
         // Create directory if it doesn't exist
         fs::create_directories(destPath.parent_path());
+        
+        // Check available disk space
+        auto destDir = destPath.parent_path();
+        auto spaceInfo = fs::space(destDir);
+        if (static_cast<uint64_t>(content.size()) > spaceInfo.available) {
+            throw std::runtime_error("Not enough disk space on " + destDir.string() + 
+                                     ": required " + std::to_string(content.size()) + 
+                                     " bytes, available " + std::to_string(spaceInfo.available) + " bytes");
+        }
         
         // Open output file in binary mode
         std::ofstream outFile(destPath, std::ios::binary);
@@ -374,6 +389,15 @@ public:
     
     // Write directory and its contents to disk
     void writeToDisk(const fs::path& destPath) const {
+        // Check available disk space for directory
+        uint64_t needed = totalSize();
+        auto spaceInfo = fs::space(destPath);
+        if (needed > spaceInfo.available) {
+            throw std::runtime_error("Not enough disk space on " + destPath.string() + 
+                                     ": required " + std::to_string(needed) + 
+                                     " bytes, available " + std::to_string(spaceInfo.available) + " bytes");
+        }
+        
         // Create the directory if it doesn't exist
         fs::path dirPath = destPath / name;
         std::cout << "Creating directory: " << dirPath.string() << std::endl;
@@ -492,6 +516,18 @@ std::shared_ptr<FileInMemory> copyFileToMemory(const fs::path& filePath) {
             throw std::runtime_error("Operation cancelled by user");
         }
     }
+    
+    // Check available system memory
+#ifdef _WIN32
+    MEMORYSTATUSEX memInfo;
+    memInfo.dwLength = sizeof(memInfo);
+    GlobalMemoryStatusEx(&memInfo);
+    uint64_t availPhys = memInfo.ullAvailPhys;
+    if (fileSize > availPhys) {
+        throw std::runtime_error("Not enough physical memory (" + std::to_string(availPhys) + 
+                                 " bytes) to load file of size " + std::to_string(fileSize) + " bytes into memory");
+    }
+#endif
     
     // Prepare buffer with initial capacity
     std::vector<char> buffer;
@@ -671,6 +707,28 @@ std::shared_ptr<DirectoryInMemory> copyDirectoryToMemory(const fs::path& dirPath
     if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {
         throw std::runtime_error("Invalid directory path: " + dirPath.string());
     }
+    
+    // Calculate total directory size
+    uint64_t totalSize = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(dirPath)) {
+        if (fs::is_regular_file(entry)) {
+            totalSize += fs::file_size(entry);
+        }
+    }
+    
+    // Check available system memory
+#ifdef _WIN32
+    {
+        MEMORYSTATUSEX memInfo;
+        memInfo.dwLength = sizeof(memInfo);
+        GlobalMemoryStatusEx(&memInfo);
+        uint64_t availPhys = memInfo.ullAvailPhys;
+        if (totalSize > availPhys) {
+            throw std::runtime_error("Not enough physical memory (" + std::to_string(availPhys) + 
+                                     " bytes) to load directory of size " + std::to_string(totalSize) + " bytes into memory");
+        }
+    }
+#endif
     
     auto directory = std::make_shared<DirectoryInMemory>(dirPath.filename().string());
     

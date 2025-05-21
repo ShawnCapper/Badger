@@ -1,8 +1,10 @@
-# Badger: High-performance file copy & integrity tool
+# Badger
 
 A versatile C++ utility for copying files and directories with support for in-memory operations, streaming, CRC32 hashing, PSARC archive handling, multi-threading, and multi-destination transfers.
 
 Badger is primarily intended for transferring from a high-speed, external, source, to a lower-speed destination ensuring copy in the event the source drive is disconnected.
+
+> NOTE: Badger is very much a work in progress program. Exercise caution when using.
 
 ## Features
 
@@ -39,6 +41,7 @@ Badger is primarily intended for transferring from a high-speed, external, sourc
 - C++20 (or newer) compiler  
 - CMake ≥ 3.20
 - Standard C++ libraries: `<filesystem>`, `<thread>`, `<mutex>`, `<future>`, etc.
+- Windows operating system (due to checking memory availability with WIN API) (Linux support coming... sometime)
 
 ## Building
 
@@ -98,4 +101,4 @@ Usage: badger <source_path> [destination_path]
 
 ## License
 
-CC0-1.0 Universal license
+This work licensed under the MIT License. See LICENSE for details. (License)
