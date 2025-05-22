@@ -15,7 +15,7 @@ Badger is primarily intended for transferring from a high-speed, external, sourc
   Load files (`FileInMemory`) or entire directory trees (`DirectoryInMemory`) into memory for fast inspection, structure printing, or write-back.
 
 - **Streamed Copy**  
-  Perform chunked, low-memory “stream copy” of large files without loading the whole file into memory.
+  Perform chunked, low-memory "stream copy" of large files without loading the whole file into memory.
 
 - **PSARC Archive Support**  
   Detect and copy PlayStation PSARC archives, or force normal copy with `-f`.
@@ -29,12 +29,31 @@ Badger is primarily intended for transferring from a high-speed, external, sourc
 - **Quiet Progress Mode**  
   Suppress per-chunk progress bars when doing parallel multi-destination transfers for cleaner output.
 
-- **Utility Classes**  
-  - `HashUtil` (CRC32)  
-  - `FileInMemory` / `DirectoryInMemory`  
-  - `PSARCHandler`  
-  - `StreamedCopy`  
-  - `ParallelMultiDestTransfer`, `ParallelFileTransfer`, `ThreadedCopyManager`
+## Project Structure
+
+Badger is organized in a modular structure to improve maintainability and readability:
+
+- **`main.cpp`**: Command-line argument parsing and main program flow
+- **`include/Badger/`**: Header files for each module
+  - `InMemory.h`: In-memory file and directory representation classes and HashUtil
+  - `PSARCHandler.h`: PSARC archive handler
+  - `StreamedCopy.h`: Low-memory streaming copy functionality
+  - `DiskIO.h`: Disk I/O operations
+  - `ParallelCopy.h`: Multi-threaded copy functionality
+- **`src/`**: Implementation files
+  - `InMemory.cpp`: Implementation of in-memory classes and HashUtil
+  - `PSARCHandler.cpp`: Implementation of PSARC handler
+  - `StreamedCopy.cpp`: Implementation of streamed copy
+  - `DiskIO.cpp`: Implementation of disk I/O operations
+  - `ParallelCopy.cpp`: Implementation of parallel copy functionality
+
+## Module Responsibilities
+
+- **InMemory Module**: Handles file and directory representation in memory, CRC32 hashing, and integrity verification
+- **DiskIO Module**: Manages writing files and directories from memory to disk
+- **PSARCHandler Module**: Provides specialized handling for PlayStation PSARC archive files
+- **StreamedCopy Module**: Implements low-memory streaming copy for large files
+- **ParallelCopy Module**: Provides multi-threaded copying functionality for improved performance
 
 ## Requirements
 
@@ -55,7 +74,7 @@ cmake --build build
 or with g++ directly:
 
 ```bash
-g++ -std=c++20 -O3 -pthread main.cpp -o Badger
+g++ -std=c++20 -O3 -pthread src/*.cpp main.cpp -o Badger
 ```
 
 ## Usage
@@ -71,8 +90,6 @@ Usage: badger <source_path> [destination_path]
        badger -md <source_path> <dest1> <dest2> [...]# Copy to multiple destinations
        badger -mdt <source_path> <dest1> <dest2> [...]# Parallel multi-destination copy
 ```
-
-
 
 ## Examples
 
