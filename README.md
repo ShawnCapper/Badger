@@ -11,6 +11,9 @@ Badger is primarily intended for transferring from a high-speed, external, sourc
 - **CRC32 Hashing & Integrity Verification**  
   Calculate CRC32 checksums for files or in-memory data and compare source/destination to verify integrity.
 
+- **FAT32 Filesystem Detection & Protection**  
+  Automatically detects FAT32 filesystems and warns users when attempting to write files larger than 4GB, which exceed FAT32's file size limit. Validates filesystem compatibility before loading large files into memory.
+
 - **In-Memory File & Directory Representation**  
   Load files (`FileInMemory`) or entire directory trees (`DirectoryInMemory`) into memory for fast inspection, structure printing, or write-back.
 
@@ -40,6 +43,7 @@ Badger is organized in a modular structure to improve maintainability and readab
   - `StreamedCopy.h`: Low-memory streaming copy functionality
   - `DiskIO.h`: Disk I/O operations
   - `ParallelCopy.h`: Multi-threaded copy functionality
+  - `DiskUtils.h`: Filesystem detection and validation utilities
 - **`src/`**: Implementation files
   - `InMemory.cpp`: Implementation of in-memory classes and HashUtil
   - `PSARCHandler.cpp`: Implementation of PSARC handler
@@ -54,6 +58,7 @@ Badger is organized in a modular structure to improve maintainability and readab
 - **PSARCHandler Module**: Provides specialized handling for PlayStation PSARC archive files
 - **StreamedCopy Module**: Implements low-memory streaming copy for large files
 - **ParallelCopy Module**: Provides multi-threaded copying functionality for improved performance
+- **DiskUtils Module**: Manages filesystem detection, FAT32 compatibility checks, and disk space validation
 
 ## Requirements
 
@@ -115,6 +120,17 @@ Usage: badger <source_path> [destination_path]
 # Copy to three locations in parallel
 ./badger -mdt data.bin /remote1/data.bin /remote2/data.bin /remote3/data.bin
 ```
+
+## Filesystem Compatibility
+
+Badger includes protection against filesystem limitations:
+
+- **FAT32 File Size Protection**: Automatically detects FAT32 filesystems and warns users when attempting to write files larger than 4GB (the FAT32 file size limit is 4GB minus 1 byte, or 4,294,967,295 bytes)
+- **Preemptive Validation**: Checks filesystem compatibility before loading large files into memory to prevent wasted time and resources
+- **Disk Space Validation**: Verifies sufficient disk space is available before initiating file transfers
+- **Intelligent Workflow**: Prevents duplicate warnings during multi-step operations
+
+This feature primarily targets Windows systems where FAT32 external drives are common.
 
 ## License
 

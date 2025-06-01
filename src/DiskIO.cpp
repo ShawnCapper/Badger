@@ -1,5 +1,6 @@
 #include "../include/Badger/DiskIO.h"
 #include "../include/Badger/InMemory.h"
+#include "../include/Badger/DiskUtils.h"
 #include <iostream>
 #include <stdexcept>
 #include <chrono>
@@ -7,7 +8,7 @@
 
 namespace Badger {
 
-void writeFileToDisk(const std::shared_ptr<FileInMemory>& file, const fs::path& destPath) {
+void writeFileToDisk(const std::shared_ptr<FileInMemory>& file, const fs::path& destPath, bool skipChecks) {
     try {
         // Check if destination directory exists
         fs::path parentPath = destPath.parent_path();
@@ -16,8 +17,14 @@ void writeFileToDisk(const std::shared_ptr<FileInMemory>& file, const fs::path& 
             fs::create_directories(parentPath);
         }
         
+        // Check filesystem limits before attempting write (if not skipping checks)
+        if (!skipChecks && !DiskUtils::checkFileSystemLimits(destPath, file->size())) {
+            std::cerr << "Warning: Filesystem limits may prevent successful file write" << std::endl;
+            std::cerr << "Attempting to write anyway..." << std::endl;
+        }
+        
         // Write file to destination
-        file->writeToFile(destPath);
+        file->writeToFile(destPath, skipChecks);
         std::cout << "File written to disk: " << destPath.string() << std::endl;
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to write file to disk: " + std::string(e.what()));
@@ -33,7 +40,7 @@ void writeFileToMultipleDestinations(const std::shared_ptr<FileInMemory>& file, 
     }
 }
 
-void writeDirectoryToDisk(const std::shared_ptr<DirectoryInMemory>& directory, const fs::path& destPath) {
+void writeDirectoryToDisk(const std::shared_ptr<DirectoryInMemory>& directory, const fs::path& destPath, bool skipChecks) {
     try {
         // Create destination if it doesn't exist
         if (!fs::exists(destPath)) {
@@ -42,7 +49,7 @@ void writeDirectoryToDisk(const std::shared_ptr<DirectoryInMemory>& directory, c
         }
         
         // Write directory structure to disk
-        directory->writeToDisk(destPath);
+        directory->writeToDisk(destPath, skipChecks);
         std::cout << "Directory written to disk: " << (destPath / directory->getName()).string() << std::endl;
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to write directory to disk: " + std::string(e.what()));
@@ -63,14 +70,19 @@ void copyFromMemoryToDisk(const fs::path& sourcePath, const fs::path& destPath) 
         auto startTime = std::chrono::high_resolution_clock::now();
         
         if (fs::is_regular_file(sourcePath)) {
+            // Validate the file transfer first to avoid wasting time loading large files that will fail
+            if (!DiskUtils::validateFileTransfer(sourcePath, destPath)) {
+                throw std::runtime_error("File transfer validation failed");
+            }
+            
             // Always use the original in-memory approach as per program's purpose
             // This approach ensures the file is completely loaded into memory before writing
             // which protects against source disconnection during the copy process
             auto file = copyFileToMemory(sourcePath);
             std::cout << "File copied to memory: " << file->getName() << std::endl;
             
-            // Write file to destination
-            writeFileToDisk(file, destPath);
+            // Write file to destination - skip redundant checks since we've already validated
+            writeFileToDisk(file, destPath, true);
         } else if (fs::is_directory(sourcePath)) {
             // Copy directory to memory then to destination
             auto directory = copyDirectoryToMemory(sourcePath);

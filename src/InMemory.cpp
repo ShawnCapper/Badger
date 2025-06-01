@@ -1,4 +1,5 @@
 #include "../include/Badger/InMemory.h"
+#include "../include/Badger/DiskUtils.h"
 #include <fstream>
 #include <iostream>
 #include <future>
@@ -103,20 +104,38 @@ void FileInMemory::calculateHash() {
     hash = HashUtil::calculateDataCRC32(content);
 }
 
-void FileInMemory::writeToFile(const fs::path& destPath) const {
+void FileInMemory::writeToFile(const fs::path& destPath, bool skipChecks) const {
     // Static mutex for thread-safe console output
     static std::mutex consoleMutex;
     
     // Create directory if it doesn't exist
     fs::create_directories(destPath.parent_path());
-    
-    // Check available disk space
+      // Check available disk space
     auto destDir = destPath.parent_path();
     auto spaceInfo = fs::space(destDir);
     if (static_cast<uint64_t>(content.size()) > spaceInfo.available) {
         throw std::runtime_error("Not enough disk space on " + destDir.string() + 
                                  ": required " + std::to_string(content.size()) + 
                                  " bytes, available " + std::to_string(spaceInfo.available) + " bytes");
+    }
+    
+    // Check if destination is a FAT32 filesystem and the file exceeds the limit
+    // Only perform the check and prompt if skipChecks is false
+    if (!skipChecks && DiskUtils::isFAT32Filesystem(destDir) && content.size() > DiskUtils::FAT32_FILE_SIZE_LIMIT) {
+        double sizeInGB = content.size() / (1024.0 * 1024 * 1024);
+        std::cout << "WARNING: Destination drive is formatted as FAT32 which has a 4GB file size limit." << std::endl;
+        std::cout << "The file you are trying to write is " << std::fixed << std::setprecision(2) 
+                 << sizeInGB << " GB, which exceeds this limit." << std::endl;
+        std::cout << "The operation will fail when it reaches the 4GB limit." << std::endl;
+        std::cout << "Do you want to continue anyway? (y/n): ";
+        
+        char response;
+        std::cin >> response;
+        if (response != 'y' && response != 'Y') {
+            throw std::runtime_error("Operation cancelled due to FAT32 file size limitations");
+        }
+        
+        std::cout << "Proceeding with write operation despite FAT32 limitations..." << std::endl;
     }
     
     // Open output file in binary mode
@@ -180,9 +199,82 @@ void FileInMemory::writeToFile(const fs::path& destPath) const {
 
 void FileInMemory::writeToMultipleDestinations(const std::vector<fs::path>& destPaths) const {
     std::cout << "Writing file to " << destPaths.size() << " destinations:" << std::endl;
+    
+    // Check if the file exceeds the FAT32 limit
+    bool fileExceedsFAT32Limit = (content.size() > DiskUtils::FAT32_FILE_SIZE_LIMIT);
+    
+    // If file exceeds FAT32 limit, check for FAT32 filesystems among destinations
+    if (fileExceedsFAT32Limit) {
+        std::vector<fs::path> fat32Destinations;
+        std::vector<fs::path> nonFat32Destinations;
+        
+        // Identify FAT32 destinations
+        for (const auto& destPath : destPaths) {
+            if (DiskUtils::isFAT32Filesystem(destPath.parent_path())) {
+                fat32Destinations.push_back(destPath);
+            } else {
+                nonFat32Destinations.push_back(destPath);
+            }
+        }
+        
+        // If there are FAT32 destinations, warn the user and provide options
+        if (!fat32Destinations.empty()) {
+            double sizeInGB = content.size() / (1024.0 * 1024 * 1024);
+            std::cout << "WARNING: " << fat32Destinations.size() << " of your destination drives are formatted as FAT32," << std::endl;
+            std::cout << "which has a 4GB file size limit. The file you are trying to write is " << std::fixed << std::setprecision(2) 
+                     << sizeInGB << " GB." << std::endl;
+            
+            // List FAT32 destinations
+            std::cout << "FAT32 destinations:" << std::endl;
+            for (const auto& path : fat32Destinations) {
+                std::cout << "  - " << path.string() << std::endl;
+            }
+            
+            // Provide options
+            std::cout << "Options:" << std::endl;
+            std::cout << "1) Skip FAT32 destinations and process others only" << std::endl;
+            std::cout << "2) Try all destinations anyway (will fail on FAT32 when reaching 4GB)" << std::endl;
+            std::cout << "3) Cancel the entire operation" << std::endl;
+            std::cout << "Your choice (1-3): ";
+            
+            int choice = 0;
+            std::cin >> choice;
+            
+            switch (choice) {                case 1:
+                    std::cout << "Skipping FAT32 destinations..." << std::endl;
+                    for (const auto& destPath : nonFat32Destinations) {
+                        try {
+                            writeToFile(destPath, true); // Skip checks as we've already done them
+                        } catch (const std::exception& e) {
+                            std::cerr << "Error writing to " << destPath.string() << ": " << e.what() << std::endl;
+                        }
+                    }
+                    return;
+                    
+                case 2:
+                    std::cout << "Proceeding with all destinations despite FAT32 limitations..." << std::endl;
+                    // Fall through to normal processing
+                    break;
+                    
+                case 3:
+                    std::cout << "Operation cancelled by user." << std::endl;
+                    return;
+                    
+                default:
+                    std::cout << "Invalid choice. Operation cancelled." << std::endl;
+                    return;
+            }
+        }
+    }
+      // Standard processing for all destinations
     for (const auto& destPath : destPaths) {
         try {
-            writeToFile(destPath);
+            // Skip redundant checks for all but the first destination
+            static bool checkedFirst = false;
+            bool skipChecksForThisPath = checkedFirst;
+            checkedFirst = true;
+            
+            writeToFile(destPath, skipChecksForThisPath);
         } catch (const std::exception& e) {
             std::cerr << "Error writing to " << destPath.string() << ": " << e.what() << std::endl;
         }
@@ -217,7 +309,7 @@ void DirectoryInMemory::addSubdirectory(const std::string& dirName, std::shared_
     subdirectories[dirName] = directory;
 }
 
-void DirectoryInMemory::writeToDisk(const fs::path& destPath) const {
+void DirectoryInMemory::writeToDisk(const fs::path& destPath, bool skipChecks) const {
     fs::path dirPath = destPath / name;
     
     // Create the directory
@@ -226,20 +318,73 @@ void DirectoryInMemory::writeToDisk(const fs::path& destPath) const {
     } catch (const fs::filesystem_error& e) {
         throw std::runtime_error("Failed to create directory: " + dirPath.string() + " (" + e.what() + ")");
     }
+
+    // Check if destination is a FAT32 filesystem (only if not skipping checks)
+    bool isFAT32 = DiskUtils::isFAT32Filesystem(dirPath);
     
-    // Write files
+    // If FAT32 and not skipping checks, check for large files that would exceed the limit
+    if (!skipChecks && isFAT32) {
+        std::vector<std::string> largeFiles;
+        
+        // Check files in this directory
+        for (const auto& [fileName, file] : files) {
+            if (file->size() > DiskUtils::FAT32_FILE_SIZE_LIMIT) {
+                largeFiles.push_back(fileName);
+            }
+        }
+        
+        // Check files in subdirectories (recursive function to find large files)
+        std::function<void(const std::shared_ptr<DirectoryInMemory>&, std::string)> findLargeFiles = 
+            [&largeFiles, &findLargeFiles](const std::shared_ptr<DirectoryInMemory>& dir, std::string path) {
+                for (const auto& [fileName, file] : dir->getFiles()) {
+                    if (file->size() > DiskUtils::FAT32_FILE_SIZE_LIMIT) {
+                        largeFiles.push_back(path + "/" + fileName);
+                    }
+                }
+                
+                for (const auto& [subDirName, subDir] : dir->getSubdirectories()) {
+                    findLargeFiles(subDir, path + "/" + subDirName);
+                }
+            };
+            
+        // Find large files in subdirectories
+        for (const auto& [subDirName, subDir] : subdirectories) {
+            findLargeFiles(subDir, name + "/" + subDirName);
+        }
+        
+        // If large files are found, warn the user
+        if (!largeFiles.empty()) {
+            std::cout << "WARNING: Destination drive is formatted as FAT32 which has a 4GB file size limit." << std::endl;
+            std::cout << "The following files exceed this limit and will fail to write:" << std::endl;
+            
+            for (const auto& file : largeFiles) {
+                std::cout << "  - " << file << std::endl;
+            }
+            
+            std::cout << "Do you want to continue anyway? (y/n): ";
+            char response;
+            std::cin >> response;
+            
+            if (response != 'y' && response != 'Y') {
+                throw std::runtime_error("Operation cancelled due to FAT32 file size limitations");
+            }
+            
+            std::cout << "Proceeding despite FAT32 limitations..." << std::endl;
+        }
+    }
+      // Write files with skipChecks parameter to avoid duplicate warnings
     for (const auto& [fileName, file] : files) {
         try {
-            file->writeToFile(dirPath / fileName);
+            file->writeToFile(dirPath / fileName, skipChecks);
         } catch (const std::exception& e) {
             std::cerr << "Error writing file " << fileName << ": " << e.what() << std::endl;
         }
     }
     
-    // Write subdirectories recursively
+    // Write subdirectories recursively with skipChecks parameter
     for (const auto& [subDirName, subDir] : subdirectories) {
         try {
-            subDir->writeToDisk(dirPath);
+            subDir->writeToDisk(dirPath, skipChecks);
         } catch (const std::exception& e) {
             std::cerr << "Error writing subdirectory " << subDirName << ": " << e.what() << std::endl;
         }
@@ -248,9 +393,111 @@ void DirectoryInMemory::writeToDisk(const fs::path& destPath) const {
 
 void DirectoryInMemory::writeToMultipleDestinations(const std::vector<fs::path>& destPaths) const {
     std::cout << "Writing directory to " << destPaths.size() << " destinations:" << std::endl;
+    
+    // Check for large files exceeding FAT32 limit
+    std::vector<std::string> largeFiles;
+    
+    // Helper function to find large files recursively
+    std::function<void(const std::shared_ptr<DirectoryInMemory>&, std::string)> findLargeFiles = 
+        [&largeFiles, &findLargeFiles](const std::shared_ptr<DirectoryInMemory>& dir, std::string path) {
+            for (const auto& [fileName, file] : dir->getFiles()) {
+                if (file->size() > DiskUtils::FAT32_FILE_SIZE_LIMIT) {
+                    largeFiles.push_back(path + "/" + fileName);
+                }
+            }
+            
+            for (const auto& [subDirName, subDir] : dir->getSubdirectories()) {
+                findLargeFiles(subDir, path + "/" + subDirName);
+            }
+        };
+    
+    // Check files in this directory
+    for (const auto& [fileName, file] : files) {
+        if (file->size() > DiskUtils::FAT32_FILE_SIZE_LIMIT) {
+            largeFiles.push_back(name + "/" + fileName);
+        }
+    }
+    
+    // Check subdirectories
+    for (const auto& [subDirName, subDir] : subdirectories) {
+        findLargeFiles(subDir, name + "/" + subDirName);
+    }
+    
+    // If we have large files, check for FAT32 filesystems among destinations
+    if (!largeFiles.empty()) {
+        std::vector<fs::path> fat32Destinations;
+        std::vector<fs::path> nonFat32Destinations;
+        
+        // Identify FAT32 destinations
+        for (const auto& destPath : destPaths) {
+            if (DiskUtils::isFAT32Filesystem(destPath)) {
+                fat32Destinations.push_back(destPath);
+            } else {
+                nonFat32Destinations.push_back(destPath);
+            }
+        }
+        
+        // If there are FAT32 destinations, warn the user and provide options
+        if (!fat32Destinations.empty()) {
+            std::cout << "WARNING: " << fat32Destinations.size() << " of your destination drives are formatted as FAT32," << std::endl;
+            std::cout << "which has a 4GB file size limit. The following files exceed this limit:" << std::endl;
+            
+            for (const auto& file : largeFiles) {
+                std::cout << "  - " << file << std::endl;
+            }
+            
+            // List FAT32 destinations
+            std::cout << "FAT32 destinations:" << std::endl;
+            for (const auto& path : fat32Destinations) {
+                std::cout << "  - " << path.string() << std::endl;
+            }
+            
+            // Provide options
+            std::cout << "Options:" << std::endl;
+            std::cout << "1) Skip FAT32 destinations and process others only" << std::endl;
+            std::cout << "2) Try all destinations anyway (large files will fail on FAT32)" << std::endl;
+            std::cout << "3) Cancel the entire operation" << std::endl;
+            std::cout << "Your choice (1-3): ";
+            
+            int choice = 0;
+            std::cin >> choice;
+            
+            switch (choice) {                case 1:
+                    std::cout << "Skipping FAT32 destinations..." << std::endl;
+                    for (const auto& destPath : nonFat32Destinations) {
+                        try {
+                            // Skip redundant checks since we've already verified
+                            writeToDisk(destPath, true);
+                        } catch (const std::exception& e) {
+                            std::cerr << "Error writing to " << destPath.string() << ": " << e.what() << std::endl;
+                        }
+                    }
+                    return;
+                    
+                case 2:
+                    std::cout << "Proceeding with all destinations despite FAT32 limitations..." << std::endl;
+                    // Fall through to normal processing
+                    break;
+                    
+                case 3:
+                    std::cout << "Operation cancelled by user." << std::endl;
+                    return;
+                    
+                default:
+                    std::cout << "Invalid choice. Operation cancelled." << std::endl;
+                    return;
+            }
+        }
+    }
+      // Standard processing for all destinations
     for (const auto& destPath : destPaths) {
         try {
-            writeToDisk(destPath);
+            // Skip redundant checks for all but the first destination
+            static bool checkedFirst = false;
+            bool skipChecksForThisPath = checkedFirst;
+            checkedFirst = true;
+            
+            writeToDisk(destPath, skipChecksForThisPath);
         } catch (const std::exception& e) {
             std::cerr << "Error writing to " << destPath.string() << ": " << e.what() << std::endl;
         }
@@ -317,8 +564,7 @@ std::shared_ptr<FileInMemory> copyFileToMemory(const fs::path& filePath) {
         throw std::runtime_error("Failed to open file: " + filePath.string() + 
                               " (Error: " + std::strerror(errno) + ")");
     }
-    
-    // Read file in chunks to handle large files more efficiently
+      // Read file in chunks to handle large files more efficiently
     auto startTime = std::chrono::high_resolution_clock::now();
     buffer.resize(fileSize);
     

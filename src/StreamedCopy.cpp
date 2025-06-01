@@ -1,4 +1,5 @@
 #include "../include/Badger/StreamedCopy.h"
+#include "../include/Badger/DiskUtils.h"
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -57,6 +58,11 @@ void StreamedCopy::streamCopy(const fs::path& sourcePath, const fs::path& destPa
         throw std::runtime_error("Source path is not a regular file: " + sourcePath.string());
     }
     
+    // Validate file transfer before proceeding (checks for FAT32 limitations and space)
+    if (!DiskUtils::validateFileTransfer(sourcePath, destPath)) {
+        throw std::runtime_error("File transfer validation failed");
+    }
+    
     // Calculate source hash before copying (for integrity verification)
     std::string sourceHash;
     try {
@@ -84,7 +90,6 @@ void StreamedCopy::streamCopy(const fs::path& sourcePath, const fs::path& destPa
         throw std::runtime_error("Failed to create destination file: " + destPath.string() + 
                                " (Error: " + std::strerror(errno) + ")");
     }
-    
     // Get file size
     std::uintmax_t fileSize;
     try {
@@ -92,6 +97,9 @@ void StreamedCopy::streamCopy(const fs::path& sourcePath, const fs::path& destPa
     } catch (const fs::filesystem_error& e) {
         throw std::runtime_error("Failed to get source file size: " + std::string(e.what()));
     }
+    
+    // We've already validated file system compatibility using validateFileTransfer
+    // No need to check FAT32 compatibility again here
     
     std::cout << "Streaming file: " << sourcePath.filename().string() << " -> " 
               << destPath.filename().string() << " (" 

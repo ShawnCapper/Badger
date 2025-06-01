@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include "DiskUtils.h"
 
 namespace Badger {
 namespace fs = std::filesystem;

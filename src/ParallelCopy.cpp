@@ -51,9 +51,8 @@ void ParallelMultiDestTransfer::workerThread() {
                     if (!parentPath.empty() && !fs::exists(parentPath)) {
                         fs::create_directories(parentPath);
                     }
-                    
-                    // Write file to this destination
-                    file->writeToFile(destPath);
+                      // Write file to this destination
+                    file->writeToFile(destPath, false);  // Add skipChecks parameter (false to perform checks)
                     
                     std::lock_guard<std::mutex> lock(consoleMutex);
                     std::cout << "File written to: " << destPath.string() << std::endl;
@@ -305,9 +304,8 @@ void ParallelFileTransfer::writerThread() {
                     if (!parentPath.empty() && !fs::exists(parentPath)) {
                         fs::create_directories(parentPath);
                     }
-                    
-                    // Write file to this destination
-                    file->writeToFile(destPath);
+                      // Write file to this destination
+                    file->writeToFile(destPath, false);  // Add skipChecks parameter (false to perform checks)
                     successCount++;
                 } catch (const std::exception& e) {
                     std::lock_guard<std::mutex> lock(consoleMutex);
